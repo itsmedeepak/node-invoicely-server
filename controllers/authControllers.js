@@ -1,5 +1,5 @@
 import User from "../models/userModel.js";
-import { apiResponse } from "../utils/ApiResponse.js";
+import apiResponse from "../helper/apiResponse.js";
 import { generateToken, comparePassword, hashPassword } from "../utils/authUtils.js";
 import bcrypt from "bcryptjs";
 import { v4 as uuidv4 } from "uuid";

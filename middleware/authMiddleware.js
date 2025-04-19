@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import logger from '../utils/logger.js';
-import { apiResponse } from '../utils/ApiResponse.js';
+import apiResponse from '../helper/apiResponse.js';
 
 
 const AuthMiddleware = (req, res, next) => {

@@ -1,5 +1,5 @@
 import Product from '../models/productModel.js';
-import { apiResponse } from '../utils/ApiResponse.js';
+import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js';
 
 /**

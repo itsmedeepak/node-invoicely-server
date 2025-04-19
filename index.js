@@ -23,8 +23,7 @@ import errorHandler from './middleware/errorHandler.js';
 import logger from "./utils/logger.js"
 
 // Utils imports
-import { apiResponse } from './utils/ApiResponse.js';
-
+import apiResponse from './helper/apiResponse.js';
 dotenv.config();
 
 const app = express();
@@ -55,12 +54,17 @@ app.use('/invoice', AuthMiddleware, InvoiceRoutes);
 app.use('/invoice-config', AuthMiddleware, ConfigRoutes)
 
 
+app.use("/", (req, res)=>{
+  return apiResponse(res, 200, true, "ok")
+})
+
+
 // 404 handler
 app.use('*', (req, res) => {
   return apiResponse({
     res,
-    status: 'error',
-    succes:false,
+    status: 200,
+    success:false,
     message: 'API route not found',
   });
 });
@@ -69,7 +73,8 @@ app.use('*', (req, res) => {
 app.use(errorHandler);
 
 // Server
-const PORT = process.env.PORT || 5050;
+const PORT = process.env.PORT || 8000;
+
 app.listen(PORT, () => {
   logger.info(`🚀 Server running on http://localhost:${PORT}`);
   console.log(chalk.green.bold(`🚀 Server running on http://localhost:${PORT}`));

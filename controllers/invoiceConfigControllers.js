@@ -1,5 +1,5 @@
 import InvoiceConfig from '../models/invoiceConfigModel.js';
-import { apiResponse } from '../utils/ApiResponse.js';
+import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js'; 
 // GET Invoice Configuration
 export const getInvoiceConfiguration = async (req, res) => {

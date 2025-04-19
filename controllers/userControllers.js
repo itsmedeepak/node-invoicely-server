@@ -1,6 +1,6 @@
 import bcrypt from 'bcryptjs';
 import User from '../models/userModel.js';
-import { apiResponse } from '../utils/ApiResponse.js';
+import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js';
 
 // Edit Profile

@@ -1,6 +1,6 @@
 import { Invoice, LineItem, Customer } from "../models/invoiceModel.js";
 import InvoiceConfiguration from "../models/invoiceConfigModel.js"
-import { apiResponse } from "../utils/ApiResponse.js";
+import apiResponse from "../helper/apiResponse.js";
 import logger from "../utils/logger.js";
 import { sendEmail } from "../utils/emailUtil.js";
 import {invoiceTemplate} from "../static/templates/invoice.js"
