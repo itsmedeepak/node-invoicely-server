@@ -1,6 +1,7 @@
 import Product from '../models/productModel.js';
 import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js';
+import { client, connectRedis } from "../cache/redis.js"; // Redis cache utilities
 
 /**
  * Get all products for the authenticated user
@@ -10,8 +11,23 @@ export const getProducts = async (req, res) => {
   if (!userId) return apiResponse(res, 401, false, 'User not authenticated');
 
   try {
+    // Check Redis cache first
+    await connectRedis();
+    const cacheKey = `products:${userId}`;
+    const cachedProducts = await client.get(cacheKey);
+
+    if (cachedProducts) {
+      logger.info(`Returning cached products for user ${userId}`);
+      return apiResponse(res, 200, true, 'Products fetched successfully', JSON.parse(cachedProducts));
+    }
+
+    // If not cached, fetch from DB
     const products = await Product.findAll({ where: { user_id: userId } });
     logger.info(`Fetched ${products.length} products for user ${userId}`);
+
+    // Cache the result for 5 minutes (300 seconds)
+    await client.set(cacheKey, JSON.stringify(products), 'EX', 300); // Cache for 5 minutes
+
     return apiResponse(res, 200, true, 'Products fetched successfully', products);
   } catch (error) {
     logger.error(`Error fetching products for user ${userId}: ${error.message}`);
@@ -30,6 +46,17 @@ export const getProduct = async (req, res) => {
   if (!userId) return apiResponse(res, 401, false, 'User not authenticated');
 
   try {
+    // Check Redis cache first
+    await connectRedis();
+    const cacheKey = `product:${userId}:${productId}`;
+    const cachedProduct = await client.get(cacheKey);
+
+    if (cachedProduct) {
+      logger.info(`Returning cached product ${productId} for user ${userId}`);
+      return apiResponse(res, 200, true, 'Product fetched successfully', JSON.parse(cachedProduct));
+    }
+
+    // If not cached, fetch from DB
     const product = await Product.findOne({ where: { id: productId, user_id: userId } });
 
     if (!product) {
@@ -38,6 +65,10 @@ export const getProduct = async (req, res) => {
     }
 
     logger.info(`Product ${productId} fetched for user ${userId}`);
+
+    // Cache the result for 5 minutes (300 seconds)
+    await client.set(cacheKey, JSON.stringify(product), 'EX', 300); // Cache for 5 minutes
+
     return apiResponse(res, 200, true, 'Product fetched successfully', product);
   } catch (error) {
     logger.error(`Error fetching product ${productId}: ${error.message}`);
@@ -70,6 +101,10 @@ export const createProduct = async (req, res) => {
     });
 
     logger.info(`Product ${product.id} created by user ${userId}`);
+
+    // Invalidate cache for products after new product is created
+    await client.del(`products:${userId}`);
+
     return apiResponse(res, 201, true, 'Product created successfully', product.id);
   } catch (error) {
     logger.error(`Error creating product for user ${userId}: ${error.message}`);
@@ -109,6 +144,10 @@ export const updateProduct = async (req, res) => {
     }
 
     logger.info(`Product ${productId} updated by user ${userId}`);
+
+    // Invalidate cache for the updated product
+    await client.del(`product:${userId}:${productId}`);
+
     return apiResponse(res, 200, true, 'Product updated successfully');
   } catch (error) {
     logger.error(`Error updating product ${productId}: ${error.message}`);
@@ -136,6 +175,11 @@ export const deleteProduct = async (req, res) => {
     }
 
     logger.info(`Product ${productId} deleted by user ${userId}`);
+
+    // Invalidate cache for the deleted product and product list
+    await client.del(`product:${userId}:${productId}`);
+    await client.del(`products:${userId}`);
+
     return apiResponse(res, 200, true, 'Product deleted successfully');
   } catch (error) {
     logger.error(`Error deleting product ${productId}: ${error.message}`);

@@ -2,6 +2,7 @@ import bcrypt from 'bcryptjs';
 import User from '../models/userModel.js';
 import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js';
+import { client, connectRedis } from "../cache/redis.js"; // Redis cache utilities
 
 // Edit Profile
 export const editProfile = async (req, res) => {
@@ -31,6 +32,9 @@ export const editProfile = async (req, res) => {
       return apiResponse(res, 404, false, 'Profile not found or not updated');
     }
 
+    // Invalidate the cache after profile update
+    await client.del(`profile:${userId}`); // Remove the cached profile data
+
     logger.info(`Profile updated successfully for user ${userId}`);
     return apiResponse(res, 200, true, 'Profile updated');
   } catch (error) {
@@ -45,6 +49,17 @@ export const getProfile = async (req, res) => {
   if (!userId) return apiResponse(res, 401, false, 'Unauthorized');
 
   try {
+    // Check Redis cache first
+    await connectRedis();
+    const cacheKey = `profile:${userId}`;
+    const cachedProfile = await client.get(cacheKey);
+
+    if (cachedProfile) {
+      logger.info(`Returning cached profile for user ${userId}`);
+      return apiResponse(res, 200, true, 'Profile fetched', JSON.parse(cachedProfile));
+    }
+
+    // If not cached, fetch from DB
     const user = await User.findByPk(userId);
 
     if (!user) {
@@ -62,6 +77,9 @@ export const getProfile = async (req, res) => {
       created_at: user.createdAt,
       updated_at: user.updatedAt,
     };
+
+    // Cache the profile data for 5 minutes (300 seconds)
+    await client.set(cacheKey, JSON.stringify(data), 'EX', 300); // Cache for 5 minutes
 
     logger.info(`Profile fetched successfully for user ${userId}`);
     return apiResponse(res, 200, true, 'Profile fetched', data);
@@ -97,6 +115,9 @@ export const changePassword = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(new_password, 10);
     await user.update({ password: hashedPassword, updatedAt: new Date() });
+
+    // Invalidate the cache after password change
+    await client.del(`profile:${userId}`); // Remove the cached profile data
 
     logger.info(`Password updated successfully for user ${userId}`);
     return apiResponse(res, 200, true, 'Password changed successfully');

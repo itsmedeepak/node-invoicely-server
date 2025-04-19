@@ -1,13 +1,27 @@
 import Subscription from '../models/subscriptionModel.js';
 import apiResponse from '../helper/apiResponse.js';
 import logger from '../utils/logger.js';
+import { client, connectRedis } from "../cache/redis.js"; // Redis cache utilities
 
-
+/**
+ * Get the subscription for the authenticated user
+ */
 export const getSubscription = async (req, res) => {
   const userId = req.user_id;
   if (!userId) return apiResponse(res, 401, false, 'Unauthorized');
 
   try {
+    // Check Redis cache first
+    await connectRedis();
+    const cacheKey = `subscription:${userId}`;
+    const cachedSubscription = await client.get(cacheKey);
+
+    if (cachedSubscription) {
+      logger.info(`Returning cached subscription for user ${userId}`);
+      return apiResponse(res, 200, true, 'Subscription fetched', JSON.parse(cachedSubscription));
+    }
+
+    // If not cached, fetch from DB
     const subscription = await Subscription.findOne({ where: { user_id: userId } });
 
     if (!subscription) {
@@ -16,6 +30,10 @@ export const getSubscription = async (req, res) => {
     }
 
     logger.info(`Subscription fetched for user ${userId}`);
+
+    // Cache the result for 5 minutes (300 seconds)
+    await client.set(cacheKey, JSON.stringify(subscription), 'EX', 300); // Cache for 5 minutes
+
     return apiResponse(res, 200, true, 'Subscription fetched', subscription);
   } catch (error) {
     logger.error(`Error fetching subscription for user ${userId}: ${error.message}`);
@@ -23,7 +41,9 @@ export const getSubscription = async (req, res) => {
   }
 };
 
-
+/**
+ * Update the subscription for the authenticated user
+ */
 export const updateSubscription = async (req, res) => {
   const userId = req.user_id;
   if (!userId) return apiResponse(res, 401, false, 'Unauthorized');
@@ -52,6 +72,10 @@ export const updateSubscription = async (req, res) => {
       });
 
       logger.info(`Trial subscription created for user ${userId}`);
+
+      // Cache the trial subscription for 5 minutes
+      await client.set(`subscription:${userId}`, JSON.stringify(subscription), 'EX', 300); // Cache for 5 minutes
+
       return apiResponse(res, 201, true, 'Trial subscription created', subscription);
     }
 
@@ -62,6 +86,10 @@ export const updateSubscription = async (req, res) => {
     });
 
     logger.info(`Subscription updated for user ${userId}`);
+
+    // Cache the updated subscription for 5 minutes
+    await client.set(`subscription:${userId}`, JSON.stringify(subscription), 'EX', 300); // Cache for 5 minutes
+
     return apiResponse(res, 200, true, 'Subscription updated', subscription);
   } catch (error) {
     logger.error(`Error updating subscription for user ${userId}: ${error.message}`);

@@ -1,6 +1,7 @@
 import Customer from '../models/customerModel.js';
 import apiResponse from '../helper/apiResponse.js';
-import logger from '../utils/logger.js'; // ✅ Import logger
+import logger from '../utils/logger.js';
+import { client, connectRedis } from '../cache/redis.js';
 
 // Get all customers
 export const getCustomers = async (req, res) => {
@@ -8,7 +9,18 @@ export const getCustomers = async (req, res) => {
   if (!userId) return apiResponse(res, 401, false, 'User not authenticated');
 
   try {
+    await connectRedis();
+    const cacheKey = `customers:${userId}`;
+    const cached = await client.get(cacheKey);
+
+    if (cached) {
+      logger.info(`Serving customers for user ${userId} from cache`);
+      return apiResponse(res, 200, true, 'Customers fetched successfully (from cache)', JSON.parse(cached));
+    }
+
     const customers = await Customer.findAll({ where: { user_id: userId } });
+
+    await client.set(cacheKey, JSON.stringify(customers), { EX: 300 }); // Cache for 5 minutes
     return apiResponse(res, 200, true, 'Customers fetched successfully', customers);
   } catch (err) {
     logger.error('Failed to fetch customers:', err);
@@ -24,9 +36,19 @@ export const getCustomer = async (req, res) => {
   if (!customerId) return apiResponse(res, 400, false, 'Customer ID is required');
 
   try {
+    await connectRedis();
+    const cacheKey = `customer:${userId}:${customerId}`;
+    const cached = await client.get(cacheKey);
+
+    if (cached) {
+      logger.info(`Serving customer ${customerId} for user ${userId} from cache`);
+      return apiResponse(res, 200, true, 'Customer fetched successfully (from cache)', JSON.parse(cached));
+    }
+
     const customer = await Customer.findOne({ where: { _id: customerId, user_id: userId } });
     if (!customer) return apiResponse(res, 404, false, 'Customer not found');
 
+    await client.set(cacheKey, JSON.stringify(customer), { EX: 300 });
     return apiResponse(res, 200, true, 'Customer fetched successfully', customer);
   } catch (err) {
     logger.error(`Failed to fetch customer (${customerId}):`, err);
@@ -68,6 +90,9 @@ export const createCustomer = async (req, res) => {
       user_id: userId,
     });
 
+    await connectRedis();
+    await client.del(`customers:${userId}`); // Invalidate customer list cache
+
     return apiResponse(res, 201, true, 'Customer created successfully', customer._id);
   } catch (err) {
     logger.error('Failed to create customer:', err);
@@ -108,6 +133,10 @@ export const updateCustomer = async (req, res) => {
     if (updated === 0)
       return apiResponse(res, 404, false, 'Customer not found or not updated');
 
+    await connectRedis();
+    await client.del(`customers:${userId}`);
+    await client.del(`customer:${userId}:${customerId}`);
+
     return apiResponse(res, 200, true, 'Customer updated successfully');
   } catch (err) {
     logger.error(`Failed to update customer (${customerId}):`, err);
@@ -123,6 +152,10 @@ export const deleteCustomer = async (req, res) => {
   try {
     const deleted = await Customer.destroy({ where: { _id: customerId, user_id: userId } });
     if (!deleted) return apiResponse(res, 404, false, 'Customer not found');
+
+    await connectRedis();
+    await client.del(`customers:${userId}`);
+    await client.del(`customer:${userId}:${customerId}`);
 
     return apiResponse(res, 200, true, 'Customer deleted successfully');
   } catch (err) {

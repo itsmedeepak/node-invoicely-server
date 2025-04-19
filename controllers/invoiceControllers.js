@@ -3,10 +3,26 @@ import InvoiceConfiguration from "../models/invoiceConfigModel.js"
 import apiResponse from "../helper/apiResponse.js";
 import logger from "../utils/logger.js";
 import { sendEmail } from "../utils/emailUtil.js";
-import {invoiceTemplate} from "../static/templates/invoice.js"
+import { invoiceTemplate } from "../static/templates/invoice.js"
+import { client, connectRedis } from "../cache/redis.js";
+
 export const getInvoices = async (req, res) => {
-	const userId = req.user_id;
+  const userId = req.user_id;
+
   try {
+    await connectRedis();
+    const cacheKey = `invoices:${userId}`;
+    const cachedInvoices = await client.get(cacheKey);
+
+    if (cachedInvoices) {
+      logger.info(`Serving invoices for user ${userId} from Redis cache`);
+      return res.status(200).json({
+        success: true,
+        message: 'Invoices fetched successfully (from cache)',
+        data: JSON.parse(cachedInvoices),
+      });
+    }
+
     const invoices = await Invoice.findAll({
       include: [
         {
@@ -20,9 +36,9 @@ export const getInvoices = async (req, res) => {
           },
         },
       ],
-	  where:{user_id:userId}
+      where: { user_id: userId },
     });
-	
+
     const formatted = invoices.map((invoice) => ({
       user_id: invoice.user_id,
       invoice_id: invoice.invoice_id,
@@ -65,7 +81,9 @@ export const getInvoices = async (req, res) => {
       created_at: invoice.created_at || '',
       updated_at: invoice.updated_at || '',
     }));
-	
+
+    await client.set(cacheKey, JSON.stringify(formatted), { EX: 300 }); // Cache for 5 minutes
+
     return res.status(200).json({
       success: true,
       message: 'Invoices fetched successfully',
@@ -81,11 +99,21 @@ export const getInvoices = async (req, res) => {
   }
 };
 
+
 export const getInvoice = async (req, res) => {
   const userId = req.user_id;
   const { invoiceId } = req.params;
 
   try {
+    await connectRedis();
+    const cacheKey = `invoice:${userId}:${invoiceId}`;
+    const cachedInvoice = await client.get(cacheKey);
+
+    if (cachedInvoice) {
+      logger.info(`Serving invoice ${invoiceId} for user ${userId} from cache`);
+      return apiResponse(res, 200, true, "Invoice fetched (from cache)", JSON.parse(cachedInvoice));
+    }
+
     const invoice = await Invoice.findOne({
       where: { user_id: userId, _id: invoiceId },
       include: [
@@ -97,6 +125,8 @@ export const getInvoice = async (req, res) => {
     if (!invoice) {
       return apiResponse(res, 404, false, "Invoice not found");
     }
+
+    await client.set(cacheKey, JSON.stringify(invoice), { EX: 300 }); // Cache for 5 minutes
 
     return apiResponse(res, 200, true, "Invoice fetched", invoice);
   } catch (err) {
@@ -172,57 +202,62 @@ export const createInvoices = async (req, res) => {
       )
     );
 
-	const company = await InvoiceConfiguration.findOne({ user_id: userId });
-	
-	
-	const invoiceData = {
-	  invoice_id: invoice_no,
-	  issued_date: issued_date,
-	  due_date: due_date,
-	  currency: currency,
-	  total_amount: total_amount,
-	  payment_method: payment_method,
-	  payment_status: payment_status,
-	  customer: customer,
-	  products: products
-	};
-	
-	const template = invoiceTemplate({ company, invoice: invoiceData });
-	const subject = `Invoice #${invoiceData.invoice_id} from ${company.name}`;
-	await sendEmail(customer?.email, subject, template);
-	
+    const company = await InvoiceConfiguration.findOne({ user_id: userId });
+
+
+    const invoiceData = {
+      invoice_id: invoice_no,
+      issued_date: issued_date,
+      due_date: due_date,
+      currency: currency,
+      total_amount: total_amount,
+      payment_method: payment_method,
+      payment_status: payment_status,
+      customer: customer,
+      products: products
+    };
+
+    const template = invoiceTemplate({ company, invoice: invoiceData });
+    const subject = `Invoice #${invoiceData.invoice_id} from ${company.name}`;
+    await sendEmail(customer?.email, subject, template);
+    await connectRedis();
+    await client.del(`invoices:${userId}`); // Clear user’s invoice list cache if stored
+    await client.del(`invoice:${userId}:${invoice._id}`); // Clear specific invoice if stored
+
     return apiResponse(res, 201, true, "Invoice with customer created", {
       invoice,
       products: lineItems
     });
   } catch (err) {
-	console.log(err)
+    console.log(err)
     logger.error("Error while creating invoice:", err);
     return apiResponse(res, 500, false, "Error while creating invoice");
   }
 };
 
 export const deleteInvoices = async (req, res) => {
-	const userId = req.user_id;
-	const { invoiceId } = req.params;
-  
-	try {
-	  const deleted = await Invoice.destroy({
-		where: {
-		  user_id: userId,
-		  invoice_id: invoiceId, 
-		},
-	  });
-  
-	  if (!deleted) {
-		return apiResponse(res, 404, false, "Invoice not found");
-	  }
-  
-	  return apiResponse(res, 200, true, "Invoice deleted successfully");
-	} catch (err) {
-	  logger.error("Error while deleting invoice:", err);
-	  console.log(err)
-	  return apiResponse(res, 500, false, "Error while deleting invoice");
-	}
-  };
-  
+  const userId = req.user_id;
+  const { invoiceId } = req.params;
+
+  try {
+    const deleted = await Invoice.destroy({
+      where: {
+        user_id: userId,
+        invoice_id: invoiceId,
+      },
+    });
+
+    if (!deleted) {
+      return apiResponse(res, 404, false, "Invoice not found");
+    }
+    await connectRedis();
+    await client.del(`invoices:${userId}`); // Clear the invoice list cache
+    await client.del(`invoice:${userId}:${invoiceId}`); // Clear specific invoice cache
+
+    return apiResponse(res, 200, true, "Invoice deleted successfully");
+  } catch (err) {
+    logger.error("Error while deleting invoice:", err);
+    console.log(err)
+    return apiResponse(res, 500, false, "Error while deleting invoice");
+  }
+};
